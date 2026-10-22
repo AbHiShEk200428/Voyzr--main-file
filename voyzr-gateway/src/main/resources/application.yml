@@ -1,0 +1,98 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: voyzr-gateway
+  cloud:
+    gateway:
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOriginPatterns: "*"
+            allowedMethods: "*"
+            allowedHeaders: "*"
+            allowCredentials: true
+      routes:
+        # 1. Auth Routes (PUBLIC - NO authentication filter)
+        - id: auth-service-public
+          uri: http://localhost:8082
+          predicates:
+            - Path=/api/auth/**
+
+        # 2. Trip Service (PROTECTED)
+        - id: trip-service
+          uri: http://localhost:8081
+          predicates:
+            - Path=/api/trips/**,/api/media/**
+          filters:
+            - name: AuthenticationFilter
+
+        # 2b. Public User Lookup (PUBLIC - for invite by VOYZR-ID)
+        - id: user-service-public
+          uri: http://localhost:8082
+          predicates:
+            - Path=/api/users/public/**
+
+        # 3. User Service (PROTECTED)
+        - id: user-service
+          uri: http://localhost:8082
+          predicates:
+            - Path=/api/users/**
+          filters:
+            - name: AuthenticationFilter
+
+        # 4. Expense Service (PROTECTED)
+        - id: expense-service
+          uri: http://localhost:8083
+          predicates:
+            - Path=/api/expenses/**
+          filters:
+            - name: AuthenticationFilter
+
+        # 5. Chat Service (HTTP) (PROTECTED)
+        - id: chat-service
+          uri: http://localhost:8084
+          predicates:
+            - Path=/api/chat/**
+          filters:
+            - name: AuthenticationFilter
+
+        # 5b. Chat Service (WebSocket) - WS doesn't use auth filter
+        - id: chat-service-ws
+          uri: http://localhost:8084
+          predicates:
+            - Path=/ws-voyzr/**
+          filters:
+            - PreserveHostHeader
+
+        # 6. Notification Service (PROTECTED)
+        - id: notification-service
+          uri: http://localhost:8085
+          predicates:
+            - Path=/api/notifications/**
+          filters:
+            - name: AuthenticationFilter
+
+        # 7. Location Service (HTTP) (PROTECTED)
+        - id: location-service
+          uri: http://localhost:8086
+          predicates:
+            - Path=/api/location/**
+          filters:
+            - name: AuthenticationFilter
+
+        # 7b. Location Service (WebSocket) - WS doesn't use auth filter
+        - id: location-service-ws
+          uri: http://localhost:8086
+          predicates:
+            - Path=/ws-location/**
+          filters:
+            - PreserveHostHeader
+
+        # 8. Places Service (PUBLIC)
+        - id: places-service
+          uri: http://localhost:8087
+          predicates:
+            - Path=/api/places/**
+

@@ -1,0 +1,45 @@
+server:
+  port: 8081
+  error:
+    include-message: always
+    include-binding-errors: always
+
+spring:
+  application:
+    name: trip-service
+  datasource:
+    url: jdbc:postgresql://localhost:5433/voyzr_db
+    username: voyzr
+    password: voyzr_pass
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # Prevent startup crash if Kafka is unavailable
+      retries: 0
+    properties:
+      # Don't block the app startup waiting for Kafka broker
+      max.block.ms: 2000
+      request.timeout.ms: 2000
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    default-property-inclusion: non_null
+    date-format: yyyy-MM-dd
+    time-zone: UTC
+
+google:
+  maps:
+    api-key: ${GOOGLE_MAPS_API_KEY:AIzaSyDF2iK0lhAQUMtOy6SgHGJT-ej7RdwpMkQ}
+
+jwt:
+  secret: ${JWT_SECRET:404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}
+  expiration: 86400000 # 24 hours

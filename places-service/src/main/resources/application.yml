@@ -1,0 +1,34 @@
+server:
+  port: 8087
+
+spring:
+  application:
+    name: places-service
+  datasource:
+    url: jdbc:postgresql://localhost:5433/voyzr_db
+    username: voyzr
+    password: voyzr_pass
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+
+google:
+  maps:
+    api-key: ${GOOGLE_MAPS_API_KEY:AIzaSyDF2iK0lhAQUMtOy6SgHGJT-ej7RdwpMkQ}
+
+geoapify:
+  api-key: ${GEOAPIFY_API_KEY:87ad5a2920494346a047c4f880aa306e}
+
+unsplash:
+  access-key: ${UNSPLASH_ACCESS_KEY:HL9-EtcEg51-TT6VvyL9R6Ro1wQo_haVxS1vGQ_VjhU}
+
+locationiq:
+  token: ${LOCATIONIQ_TOKEN:pk.72ef849234060637f644693c1351387f}

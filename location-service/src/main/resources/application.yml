@@ -1,0 +1,21 @@
+server:
+  port: 8086
+
+spring:
+  application:
+    name: location-service
+  datasource:
+    url: jdbc:postgresql://localhost:5433/voyzr_db
+    username: voyzr
+    password: voyzr_pass
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+
+google:
+  maps:
+    api-key: ${GOOGLE_MAPS_API_KEY:AIzaSyDF2iK0lhAQUMtOy6SgHGJT-ej7RdwpMkQ}
+
+geoapify:
+  routing-key: ${GEOAPIFY_ROUTING_KEY:81577060081b47b484e922133c235b16}

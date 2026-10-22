@@ -1,0 +1,541 @@
+CHAPTER 7 – PROGRAM CODES
+
+7.1 VOYZR API GATEWAY
+Gateway routing and general system configuration.
+
+VoyzrGatewayApplication.java
+package com.voyzr.gateway;
+
+@SpringBootApplication
+public class VoyzrGatewayApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(VoyzrGatewayApplication.class, args);
+    }
+}
+
+
+7.2 USER SERVICE
+User authentication, registration, and profile management.
+
+AuthController.java
+package com.voyzr.userservice.controller;
+
+@RestController
+@RequestMapping("/api/auth")
+@RequiredArgsConstructor
+public class AuthController {
+
+    private final AuthService authService;
+
+    @PostMapping("/register")
+    public ResponseEntity<AuthResponse> register(@RequestBody RegisterRequest request) {
+        return ResponseEntity.ok(authService.register(request));
+    }
+
+    @PostMapping("/login")
+    public ResponseEntity<AuthResponse> login(@RequestBody AuthRequest request) {
+        return ResponseEntity.ok(authService.login(request));
+    }
+}
+
+UserController.java
+package com.voyzr.userservice.controller;
+
+@RestController
+@RequestMapping("/api/users")
+@RequiredArgsConstructor
+public class UserController {
+
+    private final UserService userService;
+
+    @PostMapping
+    public ResponseEntity<User> createUser(@RequestBody User user) {
+        return ResponseEntity.ok(userService.createUser(user));
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<User> getUser(@PathVariable Long id) {
+        return ResponseEntity.ok(userService.getUserById(id));
+    }
+
+    @GetMapping("/search")
+    public ResponseEntity<List<User>> search(@RequestParam String query) {
+        return ResponseEntity.ok(userService.searchUsers(query));
+    }
+
+    @PutMapping("/{id}/profile")
+    public ResponseEntity<User> update(@PathVariable Long id, @RequestBody User updates) {
+        return ResponseEntity.ok(userService.updateProfile(id, updates));
+    }
+
+    // Social
+    @PostMapping("/{id}/friends/{friendId}")
+    public ResponseEntity<com.voyzr.userservice.entity.Friendship> addFriend(@PathVariable Long id, @PathVariable Long friendId) {
+        return ResponseEntity.ok(userService.sendFriendRequest(id, friendId));
+    }
+
+    @PostMapping("/{id}/friends/{requesterId}/accept")
+    public ResponseEntity<Void> acceptFriend(@PathVariable Long id, @PathVariable Long requesterId) {
+        userService.acceptFriendRequest(id, requesterId);
+        return ResponseEntity.ok().build();
+    }
+
+    @GetMapping("/public/{uniquePublicId}")
+    public ResponseEntity<User> getUserByPublicId(@PathVariable String uniquePublicId) {
+        return ResponseEntity.ok(userService.getUserByPublicId(uniquePublicId));
+    }
+    // ... (Remaining implementation details omitted for brevity) ...
+}
+
+
+7.3 TRIP SERVICE
+Core business logic for managing travel itineraries and group trips.
+
+TripController.java
+package com.voyzr.tripservice.controller;
+
+@RestController
+@RequestMapping("/api/trips")
+@RequiredArgsConstructor
+@Slf4j
+public class TripController {
+
+    private final TripService tripService;
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<TripDto.ApiResponse<Void>> handleException(Exception e) {
+        log.error("Unhandled exception in TripController: ", e);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(TripDto.ApiResponse.error(e.getMessage() != null ? e.getMessage() : "Internal Server Error"));
+    }
+
+    @GetMapping("/health")
+    public ResponseEntity<String> health() {
+        return ResponseEntity.ok("Trip Service is running ✓");
+    }
+
+    @GetMapping("/my-trips")
+    public ResponseEntity<TripDto.ApiResponse<List<TripDto.TripSummaryResponse>>> getMyTrips() {
+        log.info("GET /api/trips/my-trips");
+        return ResponseEntity
+                .ok(TripDto.ApiResponse.success("Trips fetched", tripService.getMyTrips(getCurrentUserId())));
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<TripDto.ApiResponse<TripDto.TripResponse>> getTripById(@PathVariable("id") Long id) {
+        log.info("GET /api/trips/{}", id);
+        return ResponseEntity.ok(TripDto.ApiResponse.success("Trip fetched", tripService.getTripById(id)));
+    }
+
+    @PostMapping
+    public ResponseEntity<TripDto.ApiResponse<TripDto.TripResponse>> createTrip(
+            @Valid @RequestBody TripDto.CreateTripRequest request) {
+        log.info("POST /api/trips - creating trip: {}", request.getName());
+        TripDto.TripResponse trip = tripService.createTrip(request, getCurrentUserId(), getCurrentUserName());
+        return ResponseEntity.status(HttpStatus.CREATED).body(TripDto.ApiResponse.success("Trip created", trip));
+    }
+
+    @PutMapping("/{id}")
+    public ResponseEntity<TripDto.ApiResponse<TripDto.TripResponse>> updateTrip(@PathVariable("id") Long id,
+    // ... (Remaining implementation details omitted for brevity) ...
+}
+
+TripServiceApplication.java
+package com.voyzr.tripservice;
+
+/**
+ * Main entry point for the Voyzr Trip Service.
+ *
+ * @SpringBootApplication combines three annotations:
+ *   - @Configuration: marks this as a source of bean definitions
+ *   - @EnableAutoConfiguration: tells Spring Boot to auto-configure based on dependencies
+ *   - @ComponentScan: scans this package and sub-packages for Spring components
+ */
+@SpringBootApplication
+@EnableAsync
+public class TripServiceApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(TripServiceApplication.class, args);
+    }
+}
+
+
+7.4 CHAT SERVICE
+Real-time communication, STOMP WebSocket configurations, and AI chat integration.
+
+ChatController.java
+package com.voyzr.chatservice.controller;
+
+@RestController
+@RequestMapping("/api/chat")
+@RequiredArgsConstructor
+@Slf4j
+public class ChatController {
+
+    private final SimpMessagingTemplate messagingTemplate;
+    private final ChatMessageRepository chatMessageRepository;
+    private final AiChatService aiChatService;
+
+    // In-memory fallback if MongoDB is down
+    private static final List<ChatMessage> inMemoryHistory = new CopyOnWriteArrayList<>();
+
+    // ── Global exception handler for this controller ─────────────────────────
+    // Catches any uncaught exception (e.g., MongoDB MappingException for old
+    // documents that have "ai" field instead of "isAi") and returns 200 + [].
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<List<ChatMessage>> handleAnyException(Exception e) {
+        log.error("[ChatController] Unhandled exception — returning safe empty list: {}", e.getMessage());
+        // Return in-memory if available, otherwise empty list — never 500
+        List<ChatMessage> safe = inMemoryHistory.isEmpty() ? Collections.emptyList() : inMemoryHistory;
+        return ResponseEntity.ok(safe);
+    }
+
+    @GetMapping("/ping")
+    public String ping() {
+        return "Chat Service is Online";
+    }
+
+    @MessageMapping("/chat.send")
+    public void sendMessage(@Payload ChatMessage chatMessage) {
+        log.info("Received chat message from {} for trip {}", chatMessage.getSenderName(), chatMessage.getTripId());
+        chatMessage.setTimestamp(LocalDateTime.now());
+        chatMessage.setAi(false);
+
+        try {
+            ChatMessage savedMessage = chatMessageRepository.save(chatMessage);
+            chatMessage = savedMessage;
+        } catch (Exception e) {
+            log.warn("Failed to save to MongoDB, using in-memory: {}", e.getMessage());
+            if (chatMessage.getId() == null) {
+                chatMessage.setId(java.util.UUID.randomUUID().toString());
+            }
+    // ... (Remaining implementation details omitted for brevity) ...
+}
+
+VoyzrChatServiceApplication.java
+package com.voyzr.chatservice;
+
+@SpringBootApplication
+public class VoyzrChatServiceApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(VoyzrChatServiceApplication.class, args);
+    }
+}
+
+
+7.5 EXPENSE MODULE
+Financial tracking and split expense management among trip members.
+
+ExpenseController.java
+package com.voyzr.expenseservice.controller;
+
+@RestController
+@RequestMapping("/api/expenses")
+@RequiredArgsConstructor
+@Slf4j
+public class ExpenseController {
+
+    private final ExpenseService expenseService;
+
+    @GetMapping("/trip/{tripId}")
+    public ResponseEntity<List<Expense>> getExpenses(@PathVariable Long tripId) {
+        log.info("GET /api/expenses/trip/{} - Fetching expenses", tripId);
+        return ResponseEntity.ok(expenseService.getExpensesByTrip(tripId));
+    }
+
+    @GetMapping("/bulk")
+    public ResponseEntity<List<Expense>> getExpensesByTrips(@RequestParam(name = "ids") List<Long> ids) {
+        log.info("GET /api/expenses/bulk?ids={} - Fetching bulk expenses", ids);
+        if (ids == null || ids.isEmpty()) {
+            return ResponseEntity.ok(Collections.emptyList());
+        }
+        return ResponseEntity.ok(expenseService.getExpensesByTrips(ids));
+    }
+
+    @PostMapping
+    public ResponseEntity<Expense> addExpense(@RequestBody Expense expense, HttpServletRequest request) {
+        log.info("POST /api/expenses - Adding new expense: {}", expense.getDescription());
+        // Gateway injects X-User-Id header after validating JWT
+        String xUserId = request.getHeader("X-User-Id");
+        if (xUserId != null) {
+            try {
+                expense.setUserId(Long.parseLong(xUserId));
+            } catch (NumberFormatException e) {
+                log.warn("Could not parse X-User-Id header: {}", xUserId);
+                expense.setUserId(1L); // fallback
+            }
+        } else {
+            expense.setUserId(1L); // fallback for local testing
+        }
+        return ResponseEntity.ok(expenseService.addExpense(expense));
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteExpense(@PathVariable Long id) {
+    // ... (Remaining implementation details omitted for brevity) ...
+}
+
+VoyzrExpenseServiceApplication.java
+package com.voyzr.expenseservice;
+
+@SpringBootApplication
+public class VoyzrExpenseServiceApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(VoyzrExpenseServiceApplication.class, args);
+    }
+}
+
+
+7.6 LOCATION & PLACES SERVICES
+Live GPS tracking and Geoapify location intelligence integrations.
+
+LocationController.java
+package com.voyzr.locationservice.controller;
+
+@RestController
+@RequiredArgsConstructor
+@Slf4j
+public class LocationController {
+
+    private final SimpMessagingTemplate messagingTemplate;
+    private final DistanceMatrixService distanceMatrixService;
+    private final MemberLocationRepository repository;
+    private final com.voyzr.locationservice.service.SynchronizationService syncService;
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<com.voyzr.locationservice.dto.SyncReport> handleException(Exception e) {
+        log.error("Unhandled error in LocationController: ", e);
+        // Return an empty report with an error message instead of null
+        com.voyzr.locationservice.dto.SyncReport errorReport = com.voyzr.locationservice.dto.SyncReport.builder()
+                .destinationName("Error: " + e.getMessage())
+                .memberStatus(new java.util.ArrayList<>())
+                .build();
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorReport);
+    }
+
+    @MessageMapping("/location.update")
+    public void updateLocation(@Payload LocationUpdate update) {
+        String type = update.getType() != null ? update.getType() : "LOCATION";
+
+        log.debug("Location update [{}] for trip {}: User {} at {},{}",
+                type, update.getTripId(), update.getUserId(), update.getLat(), update.getLng());
+
+        // 1. Persist only if it's a real location update
+        if ("LOCATION".equals(type)) {
+            MemberLocation loc = repository.findFirstByTripIdAndUserIdOrderByUpdatedAtDesc(update.getTripId(), update.getUserId())
+                    .orElse(MemberLocation.builder()
+                            .tripId(update.getTripId())
+                            .userId(update.getUserId())
+                            .build());
+
+            loc.setLat(update.getLat());
+            loc.setLng(update.getLng());
+            loc.setStatus(update.getStatus());
+            repository.save(loc);
+        }
+
+        // 2. Broadcast to all members of this trip (including CURSOR movements)
+    // ... (Remaining implementation details omitted for brevity) ...
+}
+
+PlacesController.java
+package com.voyzr.placesservice.controller;
+
+@RestController
+@RequestMapping("/api/places")
+@Slf4j
+@RequiredArgsConstructor
+public class PlacesController {
+
+    private final PlacesService placesService;
+    private final AttractionRepository attractionRepository;
+
+    @GetMapping("/search")
+    public List<PlacesService.PlaceSuggestion> search(@RequestParam String query) {
+        return placesService.searchPlaces(query);
+    }
+
+    @GetMapping("/attractions")
+    public List<PlacesService.PlaceSuggestion> getAttractions(@RequestParam double lat, @RequestParam double lng) {
+        return placesService.getAttractions(lat, lng);
+    }
+
+    @GetMapping("/all")
+    public List<PlacesService.PlaceSuggestion> getAllAttractions() {
+        return placesService.getAllAttractions();
+    }
+
+    @PostMapping("/attractions/manual")
+    public ResponseEntity<Attraction> addManual(@RequestBody Attraction attraction) {
+        log.info("SCOUT MODE: Manually capturing intel for {}", attraction.getName());
+        return ResponseEntity.ok(attractionRepository.save(attraction));
+    }
+}
+
+
+7.7 NOTIFICATION SERVICE
+Asynchronous alerting and push notifications using Apache Kafka.
+
+NotificationController.java
+package com.voyzr.notificationservice.controller;
+
+@RestController
+@RequestMapping("/api/notifications")
+@RequiredArgsConstructor
+public class NotificationController {
+
+    private final NotificationRepository notificationRepository;
+
+    @GetMapping("/user/{userId}")
+    public ResponseEntity<List<Notification>> getNotifications(@PathVariable Long userId) {
+        return ResponseEntity.ok(notificationRepository.findByUserIdOrderByTimestampDesc(getCurrentUserId()));
+    }
+
+    @GetMapping("/user/{userId}/unread-count")
+    public ResponseEntity<Long> getUnreadCount(@PathVariable Long userId) {
+        return ResponseEntity.ok(notificationRepository.countByUserIdAndReadFalse(getCurrentUserId()));
+    }
+
+    @PutMapping("/{id}/read")
+    public ResponseEntity<Notification> markAsRead(@PathVariable Long id) {
+        return notificationRepository.findById(id)
+                .map(n -> {
+                    if (!n.getUserId().equals(getCurrentUserId())) {
+                        return ResponseEntity.status(org.springframework.http.HttpStatus.FORBIDDEN).<Notification>build();
+                    }
+                    n.setRead(true);
+                    return ResponseEntity.ok(notificationRepository.save(n));
+                })
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @PutMapping("/user/{userId}/read-all")
+    public ResponseEntity<Void> markAllAsRead(@PathVariable Long userId) {
+        List<Notification> unread = notificationRepository.findByUserIdOrderByTimestampDesc(getCurrentUserId());
+        unread.forEach(n -> n.setRead(true));
+        notificationRepository.saveAll(unread);
+        return ResponseEntity.ok().build();
+    }
+
+    private Long getCurrentUserId() {
+        org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getPrincipal() instanceof String) return 1L; // Fallback
+        return (Long) auth.getPrincipal();
+    }
+    // ... (Remaining implementation details omitted for brevity) ...
+}
+
+VoyzrNotificationServiceApplication.java
+package com.voyzr.notificationservice;
+
+@SpringBootApplication
+public class VoyzrNotificationServiceApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(VoyzrNotificationServiceApplication.class, args);
+    }
+}
+
+
+7.8 FRONTEND (REACT)
+Responsive client interface integrating map visualizations and real-time chat.
+
+GlobalTripMap.tsx
+
+// Standard Leaflet Marker Icons
+const tripIcon = L.icon({
+  iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png",
+  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png",
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+});
+
+const activeTripIcon = L.icon({
+  iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png",
+  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png",
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+});
+
+interface GlobalTripMapProps {
+  trips: Trip[];
+}
+
+function MapBounds({ trips }: { trips: Trip[] }) {
+  const map = useMap();
+  const initialized = useRef(false);
+
+  useEffect(() => {
+    if (initialized.current || trips.length === 0) return;
+    
+    const validPoints = trips
+      .filter(t => t.destinationLat && t.destinationLng)
+      .map(t => [t.destinationLat!, t.destinationLng!] as [number, number]);
+
+    if (validPoints.length > 0) {
+      const bounds = L.latLngBounds(validPoints);
+      map.fitBounds(bounds, { padding: [50, 50] });
+      initialized.current = true;
+    }
+  }, [trips, map]);
+
+  return null;
+}
+
+export default function GlobalTripMap({ trips }: GlobalTripMapProps) {
+  const validTrips = trips.filter(t => t.destinationLat && t.destinationLng);
+    // ... (Remaining implementation details omitted for brevity) ...
+}
+
+LiveTrackingMap.tsx
+import { 
+  AreaChart, 
+  Area, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip as RechartsTooltip, 
+  ResponsiveContainer 
+} from 'recharts';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+
+// Standard Leaflet Marker Icons
+const destinationIcon = L.icon({
+  iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png",
+  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png",
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+});
+
+const curatedPinIcon = L.icon({
+  iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-violet.png",
+  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png",
+  iconSize: [20, 32],
+  iconAnchor: [10, 32],
+  popupAnchor: [1, -30],
+});
+
+const rallyIcon = L.icon({
+  iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-orange.png",
+  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png",
+  iconSize: [35, 50],
+  iconAnchor: [17, 50],
+  popupAnchor: [1, -45],
+});
+    // ... (Remaining implementation details omitted for brevity) ...
+}
+
+

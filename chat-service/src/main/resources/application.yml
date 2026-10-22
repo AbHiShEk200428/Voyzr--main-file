@@ -1,0 +1,22 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: chat-service
+  data:
+    mongodb:
+      host: localhost
+      port: 27017
+      database: voyzr_chat
+      authentication-database: admin
+      username: admin
+      password: password
+
+gemini:
+  api:
+    key: ${GEMINI_API_KEY:AIzaSyBHl6VAJlbfZFmx4krRf6HANKWvLbptRVs}
+
+groq:
+  api:
+    key: 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
